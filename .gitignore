@@ -32,7 +32,12 @@
 *.app
 
 
-#Visual Studio (Code)
+# Visual Studio (Code)
 .vs/
 .vscode/
 
+# CLion
+.idea/
+
+# Other
+cmake-build-debug/
