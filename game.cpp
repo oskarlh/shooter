@@ -91,8 +91,8 @@ struct compress_utf8_result {
 			const bool needThreeBytes = cp >= (char32_t(1) << (6 + 8));
 			if(ok && outEnd - outIt >= 2 + needThreeBytes) [[likely]] { // Enough space
 				inIt = nextInIt;
-				const unsigned char mostSignificant6Bits = cp >> (8 + 8 * needThreeBytes);
-				*outIt++ = (char)(((((unsigned char) 0b11000000) << needThreeBytes) & 0xFF) | mostSignificant6Bits);
+				const unsigned char mostSignificant6Bits = (unsigned char) (cp >> (8 + 8 * needThreeBytes));
+				*outIt++ = (char)(((((unsigned char) 0b11000000) << (int) needThreeBytes) & 0xFF) | mostSignificant6Bits);
 				*outIt = (char)(((unsigned char)(cp >> 8)) & 0xFF);
 				outIt += needThreeBytes;
 				*outIt++ = (char)(((unsigned char) cp) & 0xFF);

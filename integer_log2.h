@@ -1,8 +1,12 @@
 #ifndef OSKAR_INTEGER_LOG2
 #define OSKAR_INTEGER_LOG2
 
-#include <algorithm>
+
 #include "compilation_target_info.h"
+
+
+#include <algorithm>
+#include <type_traits>
 
 #if defined(_MSC_VER) && __has_include(<intrin.h>)
 	#include <intrin.h>
@@ -30,7 +34,7 @@ namespace oskar {
 		int result;
 		if constexpr(has_builtin_clz && std::numeric_limits<Integer>::digits <= std::numeric_limits<unsigned int>::digits) {
 			unsigned int i(iv);
-			result = std::numeric_limits<unsigned int>::digits - 1 - __builtin_clz(i + !i)
+			result = std::numeric_limits<unsigned int>::digits - 1 - __builtin_clz(i + !i);
 		}
 		else if constexpr(has_builtin_clz && std::numeric_limits<Integer>::digits <= std::numeric_limits<unsigned long>::digits) {
 			unsigned long i(iv);
@@ -55,6 +59,7 @@ namespace oskar {
 		}
 		return result;
 	}
+
 }
 
 #endif

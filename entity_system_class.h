@@ -15,6 +15,9 @@
 #include <cstddef>
 #include <utility>
 #include <functional>
+#include <optional>
+#include <new>
+#include <future>
 
 #include "boost/container/small_vector.hpp"
 
@@ -24,8 +27,8 @@
 #include "useful.h"
 
 #include "entity_system_numbers.h"
-#include "entity_system_temp_refs_and_pointers.h"
-
+#include "entity_system_refs_and_pointers.h"
+#include <atomic>
 
 namespace game_engine {
 
@@ -37,72 +40,196 @@ namespace game_engine {
 	class context;
 
 	class entity_system {
+		friend class worker_specific_entity_system_operations;
 		private:
-			friend class entity_pointer;
-			friend class entity_reference;
-			friend class component_manager;
 
-			union component_instance_id_or_ucc_id {
-				component_instance_id ci_id;
-				unique_component_combination_id ucc_id;
-			};
-
-			struct alignas(std::hardware_destructive_interference_size) thread_data {
-				std::size_t thread_number = 0;
+			struct alignas(std::hardware_destructive_interference_size) worker_data {
+				std::size_t worker_number = 0;
 				entity_system& ent_sys;
-				std::vector<entity_id> entsToKill;
+				std::unique_ptr<unsigned long long []> macro_entity_deletion_flags;
+
+				constexpr worker_data(std::size_t num, entity_system& es) noexcept : worker_number(num), ent_sys(es) { }
 			};
 
-			std::vector<thread_data> per_thread_data;
+			std::vector<worker_data> worker_data_by_worker_number;
+
+			std::size_t macro_entity_deletion_flags_scale = 0;
 
 
-			std::vector<entity_reference_count_atomic> entity_refrence_counts;
-			
-			std::vector<component_instance_id_or_ucc_id> ucc_id_and_component_instance_ids_by_entity_and_slot;
-			//std::vector<component_instance_id> entity_component_instance_ids;
-			//std::vector<component_per_slot_manager_id> entity_component_per_slot_manager_ids;
-			//std::vector<unique_component_combination_id> entity_ucc_numbers;
-			std::vector<component_per_slot_manager_id> component_per_slot_manager_ids_by_slot_and_ucc;
+			std::vector<deletion_point> deletion_points_by_entity_id;
+			std::vector<unique_component_combination_id> ucc_ids_by_entity_id;
+			std::vector<component_instance_id> ci_ids_by_slot_and_entity_id;
+			std::vector<std::atomic<unsigned long long>[]> entity_deletion_flags;
 
-			unique_component_combination_count num_uccs_allocated_log2 = 0; // TODO: Better (smaller) type
+			std::vector<component_manager_short_id> component_manager_short_ids_by_slot_and_ucc_id;
+
+			unique_component_combination_count num_uccs_allocated_for = 0;
 			unique_component_combination_count num_uccs_used = 0;
-			oskar::big_enough_fast_uint<max_component_slots + 1> num_component_slots_plus_one = 0; // plus one for null
+			component_slot_count num_component_slots = 0;
 
+			entity_id greatest_live_entity_id = 0;
 			entity_count num_alive_entities = 0;
 			entity_count num_corpse_entities = 0;
 			entity_count num_entities_allocated_for = 0;
 			//entity_count num_doa_entities = 0;
 			//entity_count num_zeroed_entities = 0;
-			
+
 			/*void queue_entity_creation(std::size_t num, component_set cset) {
 
 			}
 			*/
+			deletion_point last_deletion_point = 0;
 
-			void increase_reference_counter(entity_id entityId) {
-				entity_refrence_counts[entityId].fetch_add(1, std::memory_order_relaxed);
-			}
-			void decrease_reference_counter(entity_id entityId) {
-				entity_refrence_counts[entityId].fetch_sub(1, std::memory_order_relaxed);
-			}
 
-			component_per_slot_manager_id get_component_per_slot_manager_id(temporary_entity_pointer ent, component_slot_number slotNumber) const {
-				unique_component_combination_id ucc_id = ucc_id_and_component_instance_ids_by_entity_and_slot[std::size_t(num_component_slots_plus_one) * ent.get_entity_id()].ucc_id;
-				return component_per_slot_manager_ids_by_slot_and_ucc[std::size_t(slotNumber) << num_uccs_allocated_log2 + ucc_id];
-			}
-			component_instance_id get_component_instance_id(temporary_entity_pointer ent, component_slot_number slotNumber) const {
-				return ucc_id_and_component_instance_ids_by_entity_and_slot[std::size_t(num_component_slots_plus_one) * ent.get_entity_id() + slotNumber].ci_id;
-			}
+			// Remember!!! The placeholder entity needs to have a deletion point == max_deletion_points_including_last_one_reserved_for_placeholder_entity
+			// And we need make sure we never reach that high
 
-			std::pair<component_per_slot_manager_id, component_instance_id> get_component_per_slot_manager_id_and_instance_id(temporary_entity_pointer ent, component_slot_number slotNumber) const {
-				const component_instance_id_or_ucc_id* entityData = &ucc_id_and_component_instance_ids_by_entity_and_slot[std::size_t(num_component_slots_plus_one) * ent.get_entity_id()];
-				return std::pair(entityData->ucc_id, (entityData + slotNumber)->ci_id);
-			}
 
+			void think_step_main() {
+
+			}
+			void think_step_deletion() {
+				// This part could be parallelized
+
+
+
+				//std::size_t numBlocks = 
+				//std::unique_ptr<std::atomic<unsigned long long>[]> ptr(new unsigned long long[numBlocks])
+				{ // Zero the macro flags... and fill the jump array???
+					const std::size_t numMeaningfulMacroUintsPerWorker = (greatest_live_entity_id >> macro_entity_deletion_flags_scale) / std::numeric_limits<unsigned long long>::digits;
+
+					unsigned long long* macro_entity_deletion_flags_first_combined = worker_data_by_worker_number[0].macro_entity_deletion_flags.get();
+					for(auto workerDataIt = ++(worker_data_by_worker_number.begin()); workerDataIt != worker_data_by_worker_number.end(); ++workerDataIt) {
+						for(std::size_t i = 0; i != numMeaningfulMacroUintsPerWorker; ++i) {
+							macro_entity_deletion_flags_first_combined[i] |= workerDataIt->macro_entity_deletion_flags[i];
+							workerDataIt->macro_entity_deletion_flags[i] = 0;
+						}
+					}
+					for(std::size_t i = 0; i != numMeaningfulMacroUintsPerWorker; ++i) {
+						macro_entity_deletion_flags_first_combined[i] = 0;
+					}
+				}
+
+				std::atomic<unsigned long long>* search_point = 5;
+				while(int i = 0) {
+					++search_point;
+					delete_ent(4040);
+				}
+			}
 		public:
 
-	};
+			entity_system() {
 
+				std::size_t numWorkerThreads = std::size_t(std::clamp(std::thread::hardware_concurrency(), (unsigned int) 1, (unsigned int) std::numeric_limits<std::size_t>::max()));
+
+				worker_data_by_worker_number.reserve(numWorkerThreads);
+				for(std::size_t wtNum = 0; wtNum != numWorkerThreads; ++wtNum) {
+					worker_data_by_worker_number.push_back(worker_data(wtNum, *this));
+				}
+
+				macro_entity_deletion_flags_scale = ([&]() {
+					constexpr std::size_t number_of_threads_before_we_start_saving_memory = 64; // When we a huge number of threads, we don't want to use too much memory
+					std::size_t macro_flags_scale = oskar::integer_log2(
+						std::max(number_of_threads_before_we_start_saving_memory, numWorkerThreads) *
+						std::hardware_constructive_interference_size * std::size_t(std::numeric_limits<unsigned char>::digits) // Cache line size in bits
+					);
+					macro_flags_scale -= oskar::constexpr_integer_log2(number_of_threads_before_we_start_saving_memory);
+
+					if(macro_flags_scale > std::size_t(std::numeric_limits<entity_id>::digits - 1)) { // Prevent bitshift overflow that might otherwise happen with a ridiculous number of threads
+						macro_flags_scale = std::numeric_limits<entity_id>::digits - 1;
+					}
+					return macro_flags_scale;
+				})();
+
+				
+			}
+
+			void think() {
+				think_step_main();
+				think_step_deletion();
+			}
+
+
+
+			constexpr deletion_point get_last_deletion_point() const {
+				return last_deletion_point;
+			}
+
+
+			bool has_entity_been_deleted(entity_pointer_with_deletion_point ent) const {
+				return deletion_points_by_entity_id[ent.get_entity_id()] > ent.get_deletion_point();
+			}
+			bool has_entity_been_deleted(temporary_entity_pointer ent) const = delete; // Temporary references and pointers ALWAYS point to existing entities, unless you're keeping the refs/ptrs past their lifetime
+
+
+			bool entity_has_component(temporary_entity_pointer ent, component_slot_number slotNumber, component_manager_short_id cmShortId) {
+				const unique_component_combination_id uccId = ucc_ids_by_entity_id[std::size_t(slotNumber) * num_entities_allocated_for + ent.get_entity_id()];
+				const component_manager_short_id actualShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				return actualShortId == cmShortId;
+			}
+			bool entity_has_component(entity_pointer_with_deletion_point ent, component_slot_number slotNumber, component_manager_short_id cmShortId) {
+				const unique_component_combination_id uccId = ucc_ids_by_entity_id[std::size_t(slotNumber) * num_entities_allocated_for + ent.get_entity_id()];
+				const component_manager_short_id actualShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				return !has_entity_been_deleted(ent) && actualShortId == cmShortId;
+			}
+
+			component_instance_id get_component_instance_id(temporary_entity_reference ent, component_slot_number slotNumber) const {
+				const component_instance_id ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_component_slots + ent.get_entity_id()];
+				return ciId;
+			}
+
+			std::optional<component_instance_id> try_to_get_component_instance_id(temporary_entity_pointer ent, component_slot_number slotNumber, component_manager_short_id cmShortId) const {
+				const unique_component_combination_id uccId = ucc_ids_by_entity_id[ent.get_entity_id()];
+				const component_manager_short_id managerShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				std::optional<component_instance_id> ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_component_slots + ent.get_entity_id()];
+				if(managerShortId != cmShortId) [[unlikely]] {
+					ciId = std::nullopt;
+				}
+				return ciId;
+			}
+			std::optional<component_instance_id> try_to_get_component_instance_id(entity_pointer_with_deletion_point ent, component_slot_number slotNumber, component_manager_short_id cmShortId) const {
+				const unique_component_combination_id uccId = ucc_ids_by_entity_id[ent.get_entity_id()];
+				const component_manager_short_id managerShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				std::optional<component_instance_id> ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_component_slots + ent.get_entity_id()];
+				if(has_entity_been_deleted(ent) || managerShortId != cmShortId) [[unlikely]] {
+					ciId = std::nullopt;
+				}
+				return ciId;
+			}
+
+			temporary_entity_pointer create_temporary_entity_pointer(entity_pointer_with_deletion_point ent) const {
+				return temporary_entity_pointer(has_entity_been_deleted(ent) ? placeholder_entity_id : ent.get_entity_id());
+			}
+			temporary_entity_reference create_temporary_entity_reference(entity_pointer_with_deletion_point ent) const {
+				if(has_entity_been_deleted(ent)) [[unlikely]] {
+					throw std::runtime_error("entity_system::create_temporary_entity_reference() - entity has been deleted (or ent == nullptr)");
+				}
+				return temporary_entity_reference(ent.get_entity_id());
+			}
+
+
+	};
+	class worker_specific_entity_system_operations {
+		private:
+			entity_system::worker_data& worker_specific_data;
+
+		public:
+			
+
+			void mark_entity_for_deletion(temporary_entity_pointer ent) {
+				entity_id index = ent.get_entity_id();
+
+
+				entity_id macroIndex = index >> worker_specific_data.ent_sys.macro_entity_deletion_flags_scale;
+				unsigned long long macroMask = ((unsigned long long) 1) << (macroIndex % std::numeric_limits<unsigned long long>::digits);
+				worker_specific_data.macro_entity_deletion_flags[macroIndex / std::numeric_limits<unsigned long long>::digits] |= macroMask;
+
+
+				unsigned long long mask = ((unsigned long long) 1) << (index % std::numeric_limits<unsigned long long>::digits);
+				worker_specific_data.ent_sys.entity_deletion_flags[index / std::numeric_limits<unsigned long long>::digits].fetch_or(mask, std::memory_order_relaxed);
+
+			}
+	};
 
 
 
@@ -174,7 +301,9 @@ namespace game_engine {
 	class component_manager {
 	private:
 		component_slot_number slot_number;
-		component_per_slot_manager_id per_slot_id;
+		component_manager_short_id short_id;
+		component_manager_long_id long_id;
+
 		entity_system& es;
 
 	public:
@@ -190,32 +319,26 @@ namespace game_engine {
 
 
 
-		bool has_entity_component_instance(temporary_entity_pointer ent) const {
-			return es.get_component_per_slot_manager_id(ent, slot_number) == per_slot_id;
+		bool entity_has_component(temporary_entity_pointer ent) const {
+			return es.entity_has_component(ent, slot_number, short_id);
 		}
 
-		component_instance_id get_component_instance_id_for_entity(temporary_entity_pointer ent) const {
+		bool entity_has_component(entity_pointer_with_deletion_point ent) const {
+			return es.entity_has_component(ent, slot_number, short_id);
+		}
+
+		component_instance_id get_component_instance_id_for_entity(temporary_entity_reference ent) const {
 			return es.get_component_instance_id(ent, slot_number);
 		}
 
 
 		std::optional<component_instance_id> get_component_instance_id_for_entity_if_one_exists(temporary_entity_pointer ent) const {
-			auto [perSlotId, instanceId] = es.get_component_per_slot_manager_id_and_instance_id(ent, slot_number);
-			std::optional<component_instance_id> result;
-			if(perSlotId == per_slot_id) {
-				result = instanceId;
-			}
-			return result;
+			return es.try_to_get_component_instance_id(ent, slot_number, short_id);
+		}
+		std::optional<component_instance_id> get_component_instance_id_for_entity_if_one_exists(temporary_entity_reference ent) const {
+			return es.try_to_get_component_instance_id(ent, slot_number, short_id);
 		}
 
-		component_instance_id get_component_instance_id_or_placeholder(temporary_entity_pointer ent) const {
-			auto[perSlotId, instanceId] = es.get_component_per_slot_manager_id_and_instance_id(ent, slot_number);
-			component_instance_id result = placeholder_component_instance_id;
-			if(perSlotId == per_slot_id) {
-				result = instanceId;
-			}
-			return result;
-		}
 	};
 	
 }

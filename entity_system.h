@@ -23,9 +23,8 @@
 #include "useful.h"
 
 #include "entity_system_numbers.h"
-#include "entity_system_temp_refs_and_pointers.h"
-#include "entity_system_class.h"
 #include "entity_system_refs_and_pointers.h"
+#include "entity_system_class.h"
 
 
 namespace game_engine {

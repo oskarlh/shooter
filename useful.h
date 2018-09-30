@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <bitset>
 
 namespace oskar {
 
@@ -32,6 +33,16 @@ namespace oskar {
 		max_val <= std::numeric_limits<unsigned long long>::max(), unsigned long long, std::uintmax_t
 		>>>>>>>>;
 	template<std::uintmax_t digits> using fast_uint_with_digits = big_enough_fast_uint<std::uintmax_t(1) << (std::max(0, int(std::min((std::uintmax_t) std::numeric_limits<std::uintmax_t>::digits, digits)) - 1))>;
+
+
+	template<class UnsignedInt> constexpr UnsignedInt round_up_to_power_of_two(UnsignedInt val) {
+		val += UnsignedInt(val == 0);
+		--val;
+		for(unsigned int shift = 1; shift < std::numeric_limits<UnsignedInt>::digits; shift <<= 1) {
+			val |= (val >> shift);
+		}
+		++val;
+	}
 
 
 	template<class ptr> using unowned = ptr;
@@ -67,8 +78,11 @@ namespace oskar {
 		cod.disable();
 		return result;
 	}
-}
 
+
+
+
+}
 
 
 
