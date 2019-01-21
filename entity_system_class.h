@@ -7,7 +7,6 @@
 #include <type_traits>
 #include <limits>
 #include <optional>
-#include <atomic>
 #include <algorithm>
 #include <thread>
 #include <stdexcept>
@@ -22,17 +21,18 @@
 #include "boost/container/small_vector.hpp"
 
 #include "shortmap.h"
-#include "compilation_target_info.h"
+#include "compilation_target_info.hpp"
 #include "small_set.h"
 #include "useful.h"
+#include "integer_log2.h"
+#include "over_aligned_heap_array.hpp"
 
 #include "entity_system_numbers.h"
 #include "entity_system_refs_and_pointers.h"
-#include <atomic>
+
+//#include "entity_system_worker.hpp"
 
 namespace game_engine {
-
-
 
 
 
@@ -43,34 +43,58 @@ namespace game_engine {
 		friend class worker_specific_entity_system_operations;
 		private:
 
+			struct deletion_step_data {
+
+				std::unique_ptr<component_instance_count[]> num_instance_ids_in_lists_by_manager_id; // Allocation size: numManagers
+				std::unique_ptr<oskar::big_enough_fast_uint<max_component_manager_ids_including_null * max_component_instances_per_manager>[]> offsets_to_next_by_manager_id; // Allocation size: numManagers
+				std::unique_ptr<component_instance_id[]> instances_to_delete; // Allocation size: numEntsAllocatedFor
+
+				
+
+				std::unique_ptr<unsigned long long[], oskar::over_aligned_heap_array_deleter<unsigned long long>> entity_deletion_flags;
+				std::size_t num_ints_used_for_entity_deletion_flags_row;
+				static constexpr std::size_t entity_deletion_flags_row_byte_alignment = std::hardware_destructive_interference_size;
+				
+			};
+			struct per_worker_data {
+				oskar::unowned<entity_deletion_flags*> my_entity_deletion_flags;
+			};
+
+			std::vector<std::unique_ptr<entity_count>[]> deletion_step_ent_ids_by_manager_id;
+			std::unique_ptr<entity_count[]> deletion_step_num_ents_by_manager_id;
+			//std::unique_ptr<entity_count[]> deletion_step_num_ents;
+			//std::unique_ptr<entity_count[]> deletion_step_num_ents_by_ucc;
+
+
 			struct alignas(std::hardware_destructive_interference_size) worker_data {
 				std::size_t worker_number = 0;
 				entity_system& ent_sys;
-				std::unique_ptr<unsigned long long []> macro_entity_deletion_flags;
 
 				constexpr worker_data(std::size_t num, entity_system& es) noexcept : worker_number(num), ent_sys(es) { }
 			};
 
 			std::vector<worker_data> worker_data_by_worker_number;
 
-			std::size_t macro_entity_deletion_flags_scale = 0;
-
+			std::vector<oskar::unowned<component_manager>> component_manager_pointers_by_id;
+			//std::vector<oskar::unowned<component_manager*>> component_manager_pointers_by_slot_and_short_id;
 
 			std::vector<deletion_point> deletion_points_by_entity_id;
 			std::vector<unique_component_combination_id> ucc_ids_by_entity_id;
 			std::vector<component_instance_id> ci_ids_by_slot_and_entity_id;
-			std::vector<std::atomic<unsigned long long>[]> entity_deletion_flags;
 
-			std::vector<component_manager_short_id> component_manager_short_ids_by_slot_and_ucc_id;
+			std::vector<component_manager_id> component_manager_ids_by_slot_and_ucc_id;
 
 			unique_component_combination_count num_uccs_allocated_for = 0;
 			unique_component_combination_count num_uccs_used = 0;
 			component_slot_count num_component_slots = 0;
+			entity_count num_entities_allocated_for = 0; // Including the placeholder entity
+			std::size_t total_number_of_component_instances;
 
-			entity_id greatest_live_entity_id = 0;
+
+			entity_id greatest_entity_id = 0;
+			/*entity_id greatest_live_entity_id = 0;
 			entity_count num_alive_entities = 0;
-			entity_count num_corpse_entities = 0;
-			entity_count num_entities_allocated_for = 0;
+			entity_count num_corpse_entities = 0;*/
 			//entity_count num_doa_entities = 0;
 			//entity_count num_zeroed_entities = 0;
 
@@ -88,58 +112,20 @@ namespace game_engine {
 			void think_step_main() {
 
 			}
-			void think_step_deletion() {
-				// This part could be parallelized
-
-
-
-				//std::size_t numBlocks = 
-				//std::unique_ptr<std::atomic<unsigned long long>[]> ptr(new unsigned long long[numBlocks])
-				{ // Zero the macro flags... and fill the jump array???
-					const std::size_t numMeaningfulMacroUintsPerWorker = (greatest_live_entity_id >> macro_entity_deletion_flags_scale) / std::numeric_limits<unsigned long long>::digits;
-
-					unsigned long long* macro_entity_deletion_flags_first_combined = worker_data_by_worker_number[0].macro_entity_deletion_flags.get();
-					for(auto workerDataIt = ++(worker_data_by_worker_number.begin()); workerDataIt != worker_data_by_worker_number.end(); ++workerDataIt) {
-						for(std::size_t i = 0; i != numMeaningfulMacroUintsPerWorker; ++i) {
-							macro_entity_deletion_flags_first_combined[i] |= workerDataIt->macro_entity_deletion_flags[i];
-							workerDataIt->macro_entity_deletion_flags[i] = 0;
-						}
-					}
-					for(std::size_t i = 0; i != numMeaningfulMacroUintsPerWorker; ++i) {
-						macro_entity_deletion_flags_first_combined[i] = 0;
-					}
-				}
-
-				std::atomic<unsigned long long>* search_point = 5;
-				while(int i = 0) {
-					++search_point;
-					delete_ent(4040);
-				}
-			}
+			void think_step_deletion();
 		public:
 
 			entity_system() {
 
 				std::size_t numWorkerThreads = std::size_t(std::clamp(std::thread::hardware_concurrency(), (unsigned int) 1, (unsigned int) std::numeric_limits<std::size_t>::max()));
 
+
+
 				worker_data_by_worker_number.reserve(numWorkerThreads);
 				for(std::size_t wtNum = 0; wtNum != numWorkerThreads; ++wtNum) {
 					worker_data_by_worker_number.push_back(worker_data(wtNum, *this));
 				}
 
-				macro_entity_deletion_flags_scale = ([&]() {
-					constexpr std::size_t number_of_threads_before_we_start_saving_memory = 64; // When we a huge number of threads, we don't want to use too much memory
-					std::size_t macro_flags_scale = oskar::integer_log2(
-						std::max(number_of_threads_before_we_start_saving_memory, numWorkerThreads) *
-						std::hardware_constructive_interference_size * std::size_t(std::numeric_limits<unsigned char>::digits) // Cache line size in bits
-					);
-					macro_flags_scale -= oskar::constexpr_integer_log2(number_of_threads_before_we_start_saving_memory);
-
-					if(macro_flags_scale > std::size_t(std::numeric_limits<entity_id>::digits - 1)) { // Prevent bitshift overflow that might otherwise happen with a ridiculous number of threads
-						macro_flags_scale = std::numeric_limits<entity_id>::digits - 1;
-					}
-					return macro_flags_scale;
-				})();
 
 				
 			}
@@ -148,6 +134,7 @@ namespace game_engine {
 				think_step_main();
 				think_step_deletion();
 			}
+			void worker_think();
 
 
 
@@ -162,36 +149,36 @@ namespace game_engine {
 			bool has_entity_been_deleted(temporary_entity_pointer ent) const = delete; // Temporary references and pointers ALWAYS point to existing entities, unless you're keeping the refs/ptrs past their lifetime
 
 
-			bool entity_has_component(temporary_entity_pointer ent, component_slot_number slotNumber, component_manager_short_id cmShortId) {
-				const unique_component_combination_id uccId = ucc_ids_by_entity_id[std::size_t(slotNumber) * num_entities_allocated_for + ent.get_entity_id()];
-				const component_manager_short_id actualShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
-				return actualShortId == cmShortId;
+			bool entity_has_component(temporary_entity_pointer ent, component_slot_number slotNumber, component_manager_id cmId) {
+				const unique_component_combination_id uccId = ucc_ids_by_entity_id[ent.get_entity_id()];
+				const component_manager_id actualManagerId = component_manager_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				return actualManagerId == cmId;
 			}
-			bool entity_has_component(entity_pointer_with_deletion_point ent, component_slot_number slotNumber, component_manager_short_id cmShortId) {
-				const unique_component_combination_id uccId = ucc_ids_by_entity_id[std::size_t(slotNumber) * num_entities_allocated_for + ent.get_entity_id()];
-				const component_manager_short_id actualShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
-				return !has_entity_been_deleted(ent) && actualShortId == cmShortId;
+			bool entity_has_component(entity_pointer_with_deletion_point ent, component_slot_number slotNumber, component_manager_id cmId) {
+				const unique_component_combination_id uccId = ucc_ids_by_entity_id[ent.get_entity_id()];
+				const component_manager_id actualManagerId = component_manager_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				return !has_entity_been_deleted(ent) && actualManagerId == cmId;
 			}
 
 			component_instance_id get_component_instance_id(temporary_entity_reference ent, component_slot_number slotNumber) const {
-				const component_instance_id ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_component_slots + ent.get_entity_id()];
+				const component_instance_id ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_entities_allocated_for + ent.get_entity_id()];
 				return ciId;
 			}
 
-			std::optional<component_instance_id> try_to_get_component_instance_id(temporary_entity_pointer ent, component_slot_number slotNumber, component_manager_short_id cmShortId) const {
+			std::optional<component_instance_id> try_to_get_component_instance_id(temporary_entity_pointer ent, component_slot_number slotNumber, component_manager_id cmId) const {
 				const unique_component_combination_id uccId = ucc_ids_by_entity_id[ent.get_entity_id()];
-				const component_manager_short_id managerShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
-				std::optional<component_instance_id> ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_component_slots + ent.get_entity_id()];
-				if(managerShortId != cmShortId) [[unlikely]] {
+				const component_manager_id actualManagerId = component_manager_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				std::optional<component_instance_id> ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_entities_allocated_for + ent.get_entity_id()];
+				if(actualManagerId != cmId) [[unlikely]] {
 					ciId = std::nullopt;
 				}
 				return ciId;
 			}
-			std::optional<component_instance_id> try_to_get_component_instance_id(entity_pointer_with_deletion_point ent, component_slot_number slotNumber, component_manager_short_id cmShortId) const {
+			std::optional<component_instance_id> try_to_get_component_instance_id(entity_pointer_with_deletion_point ent, component_slot_number slotNumber, component_manager_id cmId) const {
 				const unique_component_combination_id uccId = ucc_ids_by_entity_id[ent.get_entity_id()];
-				const component_manager_short_id managerShortId = component_manager_short_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
-				std::optional<component_instance_id> ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_component_slots + ent.get_entity_id()];
-				if(has_entity_been_deleted(ent) || managerShortId != cmShortId) [[unlikely]] {
+				const component_manager_id actualManagerId = component_manager_ids_by_slot_and_ucc_id[std::size_t(slotNumber) * num_uccs_allocated_for + uccId];
+				std::optional<component_instance_id> ciId = ci_ids_by_slot_and_entity_id[std::size_t(slotNumber) * num_entities_allocated_for + ent.get_entity_id()];
+				if(has_entity_been_deleted(ent) || actualManagerId != cmId) [[unlikely]] {
 					ciId = std::nullopt;
 				}
 				return ciId;
@@ -218,16 +205,8 @@ namespace game_engine {
 
 			void mark_entity_for_deletion(temporary_entity_pointer ent) {
 				entity_id index = ent.get_entity_id();
-
-
-				entity_id macroIndex = index >> worker_specific_data.ent_sys.macro_entity_deletion_flags_scale;
-				unsigned long long macroMask = ((unsigned long long) 1) << (macroIndex % std::numeric_limits<unsigned long long>::digits);
-				worker_specific_data.macro_entity_deletion_flags[macroIndex / std::numeric_limits<unsigned long long>::digits] |= macroMask;
-
-
 				unsigned long long mask = ((unsigned long long) 1) << (index % std::numeric_limits<unsigned long long>::digits);
 				worker_specific_data.ent_sys.entity_deletion_flags[index / std::numeric_limits<unsigned long long>::digits].fetch_or(mask, std::memory_order_relaxed);
-
 			}
 	};
 
@@ -298,49 +277,164 @@ namespace game_engine {
 
 	};*/
 
+	class null_component_manager;
 	class component_manager {
 	private:
-		component_slot_number slot_number;
-		component_manager_short_id short_id;
-		component_manager_long_id long_id;
+		friend class entity_system;
+		friend class null_component_manager;
 
-		entity_system& es;
+		component_slot_number slot_number = 0;
+		component_manager_id id_number = 0;
+
+		entity_system& ent_sys;
+
+		component_instance_count num_instances = 0;
+
+		std::unique_ptr<component_instance_id[]> instances_to_be_deleted; // Note: must be resized to be big enough to fit all component instance ids. Also, null_component_manager must have at least one element to facilitate branchless writes
+		component_instance_count num_instances_to_be_deleted = 0;
+		component_instance_count instances_to_be_deleted_allocated_size = 32;
+		std::size_t cpu_time_per_deletion_for_15_or_fewer_deletions = 100;
+		std::size_t cpu_time_per_deletion_for_16_or_more_deletions = 100;
+
+
+		void enqueue_component_instance_deletion(component_instance_id instanceId) {
+			assert(num_queued_deletions < num_instances);
+			instance_deletion_queue[num_queued_deletions] = instanceId;
+			++num_queued_deletions;
+		}
+
+		void process_deletion_queue() {
+			if(num_queued_deletions) {
+				computation_timer timer;
+				do_delete_instances(&instance_deletion_queue[0], &instance_deletion_queue[num_queued_deletions - 1]);
+				num_instances -= num_queued_deletions;
+				num_queued_deletions = 0;
+				std::size_t time = timer.time_elapsed();
+				
+			}
+		}
+
+		std::size_t estimate_time_required_for_deletions(std::size_t n) const {
+			const std::size_t time_per_n = n < 15 ? cpu_time_per_deletion_for_15_or_fewer_deletions : cpu_time_per_deletion_for_16_or_more_deletions;
+			std::size_t result = n;
+			result *= time_per_n;
+			if(result / time_per_n != n) { // Overflow test
+				result = std::numeric_limits<std::size_t>::max();
+			}
+			return result;
+		}
+
+	protected:
+		struct allocation_result {
+			component_instance_id first_id;
+			component_instance_count num_created;
+		};
+
+	private:
+		void queue_deletion(component_instance_id instanceId) {
+			assert(num_instances_to_be_deleted < instances_to_be_deleted_allocated_size);
+			assert(num_instances_to_be_deleted < num_instances);
+
+			instances_to_be_deleted[num_instances_to_be_deleted] = instanceId;
+			num_instances_to_be_deleted += get_id() != null_component_manager_id;
+		}
+
+		void create_instances(component_instance_count numInstancesToCreate, component_instance_id* outPtr) {
+			assert(num_instances_to_be_deleted == 0);
+			assert(outPtr != nullptr);
+
+			if(numInstancesToCreate && get_id() != null_component_manager_id) [[likely]] {
+				component_instance_count newNumInstances = num_instances + numInstancesToCreate;
+
+				if(newNumInstances < num_instances || newNumInstances > max_component_instances_per_manager) {
+					throw std::runtime_error("Tried to create too many instances of the same component type");
+				}
+
+				if(newNumInstances > instances_to_be_deleted_allocated_size) {
+					component_instance_count newInstancesToBeDeletedAllocatedSize = newNumInstances + newNumInstances / 2;
+					if(newInstancesToBeDeletedAllocatedSize < newNumInstances) [[unlikely]] { // Overflow correction
+						newInstancesToBeDeletedAllocatedSize = max_component_instances_per_manager;
+					}
+					instances_to_be_deleted.reset(new component_instance_id[newInstancesToBeDeletedAllocatedSize]);
+					instances_to_be_deleted_allocated_size = newInstancesToBeDeletedAllocatedSize;
+				}
+
+				do_create_instances(numInstancesToCreate, outPtr);
+				num_instances = newNumInstances;
+			}
+		}
+
+		void carry_out_queued_deletions() {
+			if(num_instances_to_be_deleted) {
+				do_delete_instances(instances_to_be_deleted.get(), num_instances_to_be_deleted);
+				num_instances -= num_instances_to_be_deleted;
+				num_instances_to_be_deleted = 0;
+
+				// Space saving measures:
+				if(instances_to_be_deleted_allocated_size > 32 && num_instances < instances_to_be_deleted_allocated_size / 16) {
+					const component_instance_count newInstancesToBeDeletedAllocatedSize = std::max(std::size_t(32), num_instances * 4);
+					instances_to_be_deleted.reset(new component_instance_id[newInstancesToBeDeletedAllocatedSize]);
+					instances_to_be_deleted_allocated_size = newInstancesToBeDeletedAllocatedSize;
+				}
+			}
+		}
+
+	protected:
+		virtual void do_create_instances(component_instance_count numInstancesToCreate, component_instance_id* outPtr) = 0; // Called by at most one thread at a time
+
+		virtual void do_delete_instances(const component_instance_id* listStart, std::size_t numToDelete) = 0; // Called by at most one thread at a time
+
+		[[nodiscard]] virtual std::string_view get_unique_name_utf8() const = 0;
 
 	public:
-		struct allocation_result {
-			entity_count remaining;
-			component_instance_id start;
-			component_instance_id end;
-		};
-		virtual allocation_result allocate(entity_count n) = 0;
-		virtual void deallocate(temporary_entity_reference ent) = 0;
-
-		virtual std::string_view getUniqueNameUtf8() const = 0;
+		component_manager(entity_system& es) : instances_to_be_deleted(std::make_unique<component_instance_id[]>(32)), ent_sys(es) {}
 
 
-
-		bool entity_has_component(temporary_entity_pointer ent) const {
-			return es.entity_has_component(ent, slot_number, short_id);
+		[[nodiscard]] component_instance_count instance_count() const noexcept {
+			return num_instances;
+		}
+		[[nodiscard]] component_manager_id get_id() const noexcept {
+			return id_number;
 		}
 
-		bool entity_has_component(entity_pointer_with_deletion_point ent) const {
-			return es.entity_has_component(ent, slot_number, short_id);
+		[[nodiscard]] bool entity_has_component(temporary_entity_pointer ent) const {
+			return ent_sys.entity_has_component(ent, slot_number, id_number);
 		}
 
-		component_instance_id get_component_instance_id_for_entity(temporary_entity_reference ent) const {
-			return es.get_component_instance_id(ent, slot_number);
+		[[nodiscard]] bool entity_has_component(entity_pointer_with_deletion_point ent) const {
+			return ent_sys.entity_has_component(ent, slot_number, id_number);
+		}
+
+		[[nodiscard]] component_instance_id get_instance_id_for_entity(temporary_entity_reference ent) const {
+			return ent_sys.get_component_instance_id(ent, slot_number);
 		}
 
 
-		std::optional<component_instance_id> get_component_instance_id_for_entity_if_one_exists(temporary_entity_pointer ent) const {
-			return es.try_to_get_component_instance_id(ent, slot_number, short_id);
+		[[nodiscard]] std::optional<component_instance_id> get_instance_id_for_entity_if_one_exists(temporary_entity_pointer ent) const {
+			return ent_sys.try_to_get_component_instance_id(ent, slot_number, id_number);
 		}
-		std::optional<component_instance_id> get_component_instance_id_for_entity_if_one_exists(temporary_entity_reference ent) const {
-			return es.try_to_get_component_instance_id(ent, slot_number, short_id);
+		[[nodiscard]] std::optional<component_instance_id> get_instance_id_for_entity_if_one_exists(temporary_entity_reference ent) const {
+			return ent_sys.try_to_get_component_instance_id(ent, slot_number, id_number);
 		}
 
 	};
-	
+
+
+	class null_component_manager final : public component_manager {
+		protected:
+			virtual void do_create_instances(component_instance_count numInstancesToCreate, component_instance_id* outPtr) override {
+				std::fill(outPtr, outPtr + numInstancesToCreate, component_instance_id(0));
+			}
+
+			virtual void do_delete_instances(const component_instance_id* listStart, std::size_t numToDelete) override {}
+
+			[[nodiscard]] virtual std::string_view get_unique_name_utf8() const override {
+				return "";
+			}
+
+		public:
+
+	};
 }
 
 

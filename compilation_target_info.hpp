@@ -1,5 +1,5 @@
-#ifndef OSKAR_COMPILATION_TARGET_INFO_H
-#define OSKAR_COMPILATION_TARGET_INFO_H
+#ifndef OSKAR_COMPILATION_TARGET_INFO_HPP
+#define OSKAR_COMPILATION_TARGET_INFO_HPP
 
 namespace oskar::compilation_target_info {
 	constexpr bool compiler_gcc_compatible = false

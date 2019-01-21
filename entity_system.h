@@ -18,7 +18,7 @@
 #include "boost/container/small_vector.hpp"
 
 #include "shortmap.h"
-#include "compilation_target_info.h"
+#include "compilation_target_info.hpp"
 #include "small_set.h"
 #include "useful.h"
 
