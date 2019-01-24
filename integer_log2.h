@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <utility>
 #include <type_traits>
+#include <cstddef>
 
 #if defined(_MSC_VER) && __has_include(<intrin.h>)
 	#include <intrin.h>
@@ -23,7 +24,7 @@ namespace oskar {
 
 
 
-	template<class Signed> constexpr std::make_unsigned_t<std::decay_t<Signed>> absolute_integer_value(Signed&& s) {
+	template<class Signed> [[nodiscard]] constexpr std::make_unsigned_t<std::decay_t<Signed>> absolute_integer_value(Signed&& s) {
 		using integer = std::decay_t<Signed>;
 		using unsigned_int = std::make_unsigned_t<integer>;
 
@@ -39,7 +40,7 @@ namespace oskar {
 		}
 		return result;
 	}
-	template<class ResultInt, class A, class B> std::optional<ResultInt> multiply_integers_and_check_for_overflow(A&& a, B&& b) {
+	template<class ResultInt, class A, class B> [[nodiscard]] std::optional<ResultInt> multiply_integers_and_check_for_overflow(A&& a, B&& b) {
 		using a_integer = std::decay_t<A>;
 		using b_integer = std::decay_t<B>;
 		static_assert(
@@ -56,7 +57,7 @@ namespace oskar {
 		);
 
 
-		// Consider putting in std::forward<a_integer> and std::forward<a_integer> in this function, to optimize for bigint arguments
+		// TODO: Consider putting in std::forward<a_integer> and std::forward<a_integer> in this function, to optimize for bigint arguments
 
 
 
@@ -151,7 +152,7 @@ namespace oskar {
 		return result;
 	}
 
-	template<class Integer> constexpr int constexpr_integer_log2(Integer&& i) {
+	template<class Integer> [[nodiscard]] constexpr int constexpr_integer_log2(Integer&& i) {
 		using integer = std::decay_t<Integer>;
 
 		int result = 0;
@@ -164,7 +165,7 @@ namespace oskar {
 		return result;
 	}
 
-	template<class Integer> int integer_log2(Integer&& iv) {
+	template<class Integer> [[nodiscard]] int integer_log2(Integer&& iv) {
 		constexpr bool has_builtin_clz = oskar::compilation_target_info::compiler_gcc || oskar::compilation_target_info::compiler_clang;
 		constexpr bool has_long_BitScanReverse = oskar::compilation_target_info::compiler_msvc_compatible && (oskar::compilation_target_info::architecture_arm || oskar::compilation_target_info::architecture_x86_32);
 		constexpr bool has_long_long_BitScanReverse = oskar::compilation_target_info::compiler_msvc_compatible && (oskar::compilation_target_info::architecture_arm || oskar::compilation_target_info::architecture_x86_64);
@@ -202,7 +203,7 @@ namespace oskar {
 
 
 
-	template<class Integer> constexpr int constexpr_count_trailing_zeroes(Integer&& i) {
+	template<class Integer> [[nodiscard]] constexpr int constexpr_count_trailing_zeroes(Integer&& i) {
 		using integer = std::decay_t<Integer>;
 
 		int result = 0;
@@ -217,7 +218,7 @@ namespace oskar {
 		return result;
 	}
 
-	template<class Integer> int count_trailing_zeroes(Integer&& iv) {
+	template<class Integer> [[nodiscard]] int count_trailing_zeroes(Integer&& iv) {
 		constexpr bool has_builtin_ctz = oskar::compilation_target_info::compiler_gcc || oskar::compilation_target_info::compiler_clang;
 		constexpr bool has_long_BitScanForward = oskar::compilation_target_info::compiler_msvc_compatible && (oskar::compilation_target_info::architecture_arm || oskar::compilation_target_info::architecture_x86_32);
 		constexpr bool has_long_long_BitScanForward = oskar::compilation_target_info::compiler_msvc_compatible && (oskar::compilation_target_info::architecture_arm || oskar::compilation_target_info::architecture_x86_64);

@@ -8,6 +8,6 @@ set(CMAKE_CXX_STANDARD 17)
 INCLUDE_DIRECTORIES( $ENV{BOOST_DIR} )
 
 # Add source to this project's executable.
-add_executable (shooter "game.cpp")
+add_executable (shooter "entity_system_class.cpp" "game.cpp")
 
 # TODO: Add tests and install targets if needed.

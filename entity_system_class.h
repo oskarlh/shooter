@@ -18,6 +18,7 @@
 #include <new>
 #include <future>
 
+#include "nonstd_observer_ptr.hpp"
 #include "boost/container/small_vector.hpp"
 
 #include "shortmap.h"
@@ -43,37 +44,43 @@ namespace game_engine {
 		friend class worker_specific_entity_system_operations;
 		private:
 
-			struct deletion_step_data {
-
-				std::unique_ptr<component_instance_count[]> num_instance_ids_in_lists_by_manager_id; // Allocation size: numManagers
-				std::unique_ptr<oskar::big_enough_fast_uint<max_component_manager_ids_including_null * max_component_instances_per_manager>[]> offsets_to_next_by_manager_id; // Allocation size: numManagers
-				std::unique_ptr<component_instance_id[]> instances_to_delete; // Allocation size: numEntsAllocatedFor
-
+			// deletion step data
+			//std::unique_ptr<component_instance_count[]> num_instance_ids_in_lists_by_manager_id; // Allocation size: numManagers
+			//std::unique_ptr<oskar::big_enough_fast_uint<max_component_manager_ids_including_null * max_component_instances_per_manager>[]> offsets_to_next_by_manager_id; // Allocation size: numManagers
+			//std::unique_ptr<component_instance_id[]> instances_to_delete; // Allocation size: numEntsAllocatedFor
 				
 
-				std::unique_ptr<unsigned long long[], oskar::over_aligned_heap_array_deleter<unsigned long long>> entity_deletion_flags;
-				std::size_t num_ints_used_for_entity_deletion_flags_row;
-				static constexpr std::size_t entity_deletion_flags_row_byte_alignment = std::hardware_destructive_interference_size;
-				
-			};
-			struct per_worker_data {
-				oskar::unowned<entity_deletion_flags*> my_entity_deletion_flags;
-			};
+			static constexpr std::size_t entity_deletion_flags_block_size_and_alignment = std::hardware_destructive_interference_size;
+			using deletion_flags_block = std::array<std::byte, entity_deletion_flags_block_size_and_alignment>;
+			std::unique_ptr<deletion_flags_block, oskar::over_aligned_heap_array_deleter<deletion_flags_block>> entity_deletion_flags;
+			std::size_t num_blocks_per_entity_deletion_flags_row;
+			
 
-			std::vector<std::unique_ptr<entity_count>[]> deletion_step_ent_ids_by_manager_id;
-			std::unique_ptr<entity_count[]> deletion_step_num_ents_by_manager_id;
+			//std::vector<std::unique_ptr<entity_count>[]> deletion_step_ent_ids_by_manager_id;
+			//std::unique_ptr<entity_count[]> deletion_step_num_ents_by_manager_id;
 			//std::unique_ptr<entity_count[]> deletion_step_num_ents;
 			//std::unique_ptr<entity_count[]> deletion_step_num_ents_by_ucc;
 
 
-			struct alignas(std::hardware_destructive_interference_size) worker_data {
+			struct worker_data {
 				std::size_t worker_number = 0;
 				entity_system& ent_sys;
 
 				constexpr worker_data(std::size_t num, entity_system& es) noexcept : worker_number(num), ent_sys(es) { }
+				constexpr nonstd::observer_ptr<deletion_flags_block> get_deletion_flags_row_ptr() noexcept {
+					deletion_flags_block* dfbPtr = ent_sys.entity_deletion_flags.get() + worker_number * ent_sys.num_blocks_per_entity_deletion_flags_row;
+
+					#ifdef __has_builtin
+						#if  __has_builtin(__builtin_assume_aligned)
+							dfbPtr = __builtin_assume_aligned(dfbPtr, entity_deletion_flags_block_size_and_alignment);
+						#endif
+					#endif
+					return nonstd::observer_ptr<deletion_flags_block>(dfbPtr);
+				}
 			};
 
-			std::vector<worker_data> worker_data_by_worker_number;
+			std::unique_ptr<worker_data, oskar::over_aligned_heap_array_deleter<worker_data>> worker_data_by_worker_number;
+			std::size_t num_workers = 0;
 
 			std::vector<oskar::unowned<component_manager>> component_manager_pointers_by_id;
 			//std::vector<oskar::unowned<component_manager*>> component_manager_pointers_by_slot_and_short_id;

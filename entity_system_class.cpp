@@ -118,13 +118,91 @@ namespace game_engine {
 	}
 
 
-	void entity_system::worker_think() {
+	void entity_system::worker_think(worker_data& workerData) {
 
-		{ // Deletion flag merging
+		{
+			// Deletion flag merging
+			// Done vertically in order to prevent problems when two workers have flagged the same entity for deletion
 			
-			constexpr std::size_t flag_ints_per_iteration = std::max(1, entity_deletion_flags_row_byte_alignment / sizeof(unsigned long long));
+			const deletion_flags_block* currentBlockOfFirstRowIt = entity_deletion_flags.get() + oskar::multiply_and_divide(workerData.worker_number, num_blocks_per_entity_deletion_flags_row, num_workers);
+			const deletion_flags_block* const endBlockOfFirstRowIt = entity_deletion_flags.get() + oskar::multiply_and_divide(workerData.worker_number + 1, num_blocks_per_entity_deletion_flags_row, num_workers);
+//			const deletion_flags_block* const lastIt = firstRowCurrentBlockIt + num_blocks_per_entity_deletion_flags_row * (num_workers - 1);
+			
+			
+			entity_id firstPossibleEntIdThisIteration = (currentBlockOfFirstRowIt - entity_deletion_flags.get()) * entity_deletion_flags_block_size_and_alignment * std::numeric_limits<unsigned char>::digits;
+			while(currentBlockOfFirstRowIt != endBlockOfFirstRowIt) {
+				alignas(std::max(alignof(deletion_flags_block), alignof(unsigned long long))) deletion_flags_block sumOfFlags{};
+				const deletion_flags_block* currentBlockIt = currentBlockOfFirstRowIt;
+				const deletion_flags_block* const currentBlockOfLastRowIt = currentBlockOfFirstRowIt + num_blocks_per_entity_deletion_flags_row * num_workers;
+
+				#ifdef __has_builtin
+					#if  __has_builtin(__builtin_assume_aligned)
+						currentBlockIt = __builtin_assume_aligned(currentBlockIt, entity_deletion_flags_block_size_and_alignment);
+					#endif
+				#endif
+				while(currentBlockIt <= currentBlockOfLastRowIt) {
+					const deletion_flags_block& currentBlock = *currentBlockIt;
+					for(std::size_t i = 0; i != currentBlock.size(); ++i) {
+						sumOfFlags[i] |= currentBlock[i];
+					}
+					currentBlockIt += num_blocks_per_entity_deletion_flags_row;
+				}
+				
+
+
+				for(std::size_t i = 0; i != sumOfFlags.size(); ++i) {
+					std::byte part = sumOfFlags[i];
+					while(part != std::byte(0)) [[unlikely]] {
+						const std::size_t bitNum = oskar::count_trailing_zeroes(part);
+						part ^= deletion_flags_block::value_type(1) << bitNum;
+						const entity_id entId = bitNum + firstPossibleEntIdThisIteration + i * std::numeric_limits<unsigned char>::digits;
+						const unique_component_combination_id uccId = ucc_ids_by_entity_id[entId];
+						entity_count& num_deletes = workerData.num_deletes_by_ucc[uccId];
+						const entity_count deletes_offset = workerData.deletes_offset_by_ucc[uccId];
+						
+						workerData.ents_to_delete[deletes_offset + num_deletes] = entId;
+						num_deletes++;
+						
+						OPKWEPOKROPWKER FORTSÄTT HÄR!!!! NU HAR VI ETT ENTITY_ID SOM DU VET BEHÖVS TAS BORT!!!
+					}
+				}
+
+				++currentBlockOfFirstRowIt;
+				firstPossibleEntIdThisIteration += entity_deletion_flags_block_size_and_alignment * std::numeric_limits<unsigned char>::digits;
+			}
+		}
+		{
+			// Zero this worker's deletion flags
+			deletion_flags_block* blockToZeroIt = entity_deletion_flags.get() + num_blocks_per_entity_deletion_flags_row * threadNum;
+			deletion_flags_block* endIt = blockToZeroIt + num_blocks_per_entity_deletion_flags_row;
+
+			#ifdef __has_builtin
+				#if  __has_builtin(__builtin_assume_aligned)
+					blockToZeroIt = __builtin_assume_aligned(blockToZeroIt, entity_deletion_flags_block_size_and_alignment);
+				#endif
+			#endif
+			while(blockToZeroIt != endIt) {
+
+				deletion_flags_block& block = *blockToZeroIt;
+
+				// Before we zero, we find out if the flags are not already zero
+				// We do this because we don't want our flags bytes to be invalidated in other threads' cache unnecessarily
+				bool needsZeroing = false;
+				for(std::size_t i = 0; i != block.size(); ++i) {
+					needsZeroing = needsZeroing || block[i] != 0;
+				}
+				if(needsZeroing) {
+					for(std::size_t i = 0; i != block.size(); ++i) {
+						block[i] = 0;
+					}
+				}
+				++blockToZeroIt;
+			}
+		}
+
+		{
 			combine_rows(entity_deletion_flags.get(), num_ints_used_for_entity_deletion_flags_row, num_ints_used_for_entity_deletion_flags_row, num_workers, [](unsigned long long* sourceStart, unsigned long long* sourceEnd, unsigned long long* resultStart) {
-				// ENABLE THIS FOR GCC: sourceStart = __builtin_assume_aligned(sourceStart, entity_deletion_flags_row_byte_alignment);
+				
 				while(sourceStart != sourceEnd) {
 					bool containsSetFlags = false;
 					for(std::size_t i = 0; i != flag_ints_per_iteration; ++i) {
@@ -150,33 +228,6 @@ namespace game_engine {
 		wait for all
 
 
-
-
-
-			NEW CODE TO USE::::::::::: pseudo-code: should use std::experimental::simd (or Vc (Master branch))
-
-			vector<simd> infoNums;
-			vector<simd_mask> deletionBlocks;
-			std::size_t dbNum = 0;
-			simd_mask setMask = false;
-			do {
-				simd_mask db = deletionBlocks[dbNum] ^ setMask;
-				if(db.none_set()) {
-					++dbNum;
-					setMask = false;
-				} else {
-					NJONONONONONOONONONONO WE NEED TO WRITE COMPONENT_IDs NOT FUCKING ENTITY_IDS
-					int firstSet = db.find_first_set();
-					setMask = db;
-					setMask &= uccNums[dbNum] == uccNums[dbNum][firstSet];
-					for(slot numbers this thread is responsible for) {
-						manager_id manId = manager_ids_by_slot_and_ucc[slotNumber][uccNums[dbNum][firstSet]];
-						simd_mask* output = managers[manId]->newDeletes;
-						output = manId == placeholder_manager ? somebullshitarray : output;
-						*output = setMask;
-					}
-				}
-			} while(dbNum != deletionBlocks.size());
 
 
 

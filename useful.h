@@ -178,7 +178,7 @@ namespace oskar {
 
 
 
-	template<class UnsignedInt> constexpr std::decay_t<UnsignedInt> round_up_to_power_of_two(UnsignedInt&& val) {
+	template<class UnsignedInt> [[nodiscard]] constexpr std::decay_t<UnsignedInt> round_up_to_power_of_two(UnsignedInt&& val) {
 		static_assert(
 			std::numeric_limits<std::decay_t<UnsignedInt>>::is_integer &&
 			std::numeric_limits<std::decay_t<UnsignedInt>>::is_exact &&
@@ -230,9 +230,20 @@ namespace oskar {
 		return result;
 	}
 
+	// Note: divisor == 0 results in undefined behaviour
+	template<class IntType> [[nodiscard]] constexpr std::decay_t<IntType> divide_integer_rounding_away_from_zero(IntType dividend, IntType divisor) {
+		using integer = std::decay_t<IntType>;
+		static_assert(
+			std::numeric_limits<integer>::is_integer
+		);
+		const bool negativeResult = std::numeric_limits<integer>::is_signed && (dividend < 0) != (divisor < 0);
+		// While modulo is usually an expensive operation (as expensive as division),
+		// it's often free when compiling for common CPU architectures when done after a division using the same operands
+		return (dividend / divisor) + integer(dividend % divisor == 0 ? 0 : (negativeResult ? -1 : 1));
+	}
 
 	// Avoids overflow during the multiplication part of ((a * b) / divisor)
-	template<class IntType> [[nodiscard]] constexpr std::decay_t<IntType> multiply_and_divide(const IntType& a, const IntType& b, const IntType& divisor) {
+	template<class IntType> [[nodiscard]] constexpr std::decay_t<IntType> multiply_and_divide(IntType a, IntType b, IntType divisor) {
 
 		IS THIS FUNCTION WELL-WRITTEN?!?!!?!?! PLEASE REREAD IT AND CONSIDER THAT SIGNED OVERFLOW IS UB, AND THAT lowest() IS -max() - 1
 		USE big_enough_fast_uint_or_sint_for_multiplication_result in some places to reduce code!!
@@ -274,8 +285,7 @@ namespace oskar {
 					result = -result;
 				}
 			}
-		}
-		else {
+		} else {
 			using twice_the_digits_type = boost::multiprecision::number<boost::multiprecision::cpp_int_backend<
 				std::numeric_limits<integer>::digits * 2,
 				std::numeric_limits<integer>::digits * 2,
@@ -377,7 +387,9 @@ namespace oskar {
 	};
 
 
-	class computation_timer {
+
+
+	class computation_timer { // REVIEW/DELETE THIS CODE
 		private:
 			#ifdef _MSC_VER
 				static constexpr bool useQueryThreadCycleTime = true;
