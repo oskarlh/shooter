@@ -50,10 +50,12 @@ namespace game_engine {
 			//std::unique_ptr<component_instance_id[]> instances_to_delete; // Allocation size: numEntsAllocatedFor
 				
 
-			static constexpr std::size_t entity_deletion_flags_block_size_and_alignment = std::hardware_destructive_interference_size;
+			static constexpr std::size_t entity_deletion_flags_block_size_and_alignment = oskar::divide_integer_rounding_away_from_zero((std::size_t) entities_per_full_segment, (std::size_t) std::numeric_limits<unsigned char>::digits);
 			using deletion_flags_block = std::array<std::byte, entity_deletion_flags_block_size_and_alignment>;
 			std::unique_ptr<deletion_flags_block, oskar::over_aligned_heap_array_deleter<deletion_flags_block>> entity_deletion_flags;
-			std::size_t num_blocks_per_entity_deletion_flags_row;
+			constexpr std::size_t entity_deletion_flags_blocks_per_worker() const {
+				return oskar::divide_integer_rounding_away_from_zero(num_entities_allocated_for, entities_per_full_segment);
+			}
 			
 
 			//std::vector<std::unique_ptr<entity_count>[]> deletion_step_ent_ids_by_manager_id;
@@ -63,12 +65,12 @@ namespace game_engine {
 
 
 			struct worker_data {
-				std::size_t worker_number = 0;
+				worker_id id = 0;
 				entity_system& ent_sys;
 
-				constexpr worker_data(std::size_t num, entity_system& es) noexcept : worker_number(num), ent_sys(es) { }
+				constexpr worker_data(worker_id i, entity_system& es) noexcept : id(i), ent_sys(es) { }
 				constexpr nonstd::observer_ptr<deletion_flags_block> get_deletion_flags_row_ptr() noexcept {
-					deletion_flags_block* dfbPtr = ent_sys.entity_deletion_flags.get() + worker_number * ent_sys.num_blocks_per_entity_deletion_flags_row;
+					deletion_flags_block* dfbPtr = ent_sys.entity_deletion_flags.get() + id * ent_sys.num_blocks_per_entity_deletion_flags_row;
 
 					#ifdef __has_builtin
 						#if  __has_builtin(__builtin_assume_aligned)
@@ -77,10 +79,13 @@ namespace game_engine {
 					#endif
 					return nonstd::observer_ptr<deletion_flags_block>(dfbPtr);
 				}
+				constexpr std::span<deletion_flags_block> get_deletion_flags_span() noexcept {
+
+				}
 			};
 
 			std::unique_ptr<worker_data, oskar::over_aligned_heap_array_deleter<worker_data>> worker_data_by_worker_number;
-			std::size_t num_workers = 0;
+			worker_count num_workers = 0;
 
 			std::vector<oskar::unowned<component_manager>> component_manager_pointers_by_id;
 			//std::vector<oskar::unowned<component_manager*>> component_manager_pointers_by_slot_and_short_id;

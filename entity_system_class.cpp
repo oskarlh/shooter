@@ -4,6 +4,30 @@
 
 
 
+
+#include <algorithm>
+#include <utility>
+
+
+template<class INPUT_IT, class OUTPUT_IT>
+OUTPUT_IT oskar_merge_two_arrays(INPUT_IT a, INPUT_IT aEnd, INPUT_IT b, INPUT_IT bEnd, OUTPUT_IT out) {
+	if(a != aEnd && b != bEnd && *(aEnd - 1) > *(bEnd - 1)) {
+		std::swap(a, b);
+		std::swap(aEnd, bEnd);
+	}
+	while(a != aEnd) {
+		auto aVal = *a;
+		auto bVal = *b;
+		*out++ = aVal <= bVal ? aVal : bVal;
+		a += aVal <= bVal;
+		b += aVal >= bVal;
+	}
+	return std::copy(b, bEnd, out);
+}
+
+
+
+
 template<class RAND_ACC_IT, class FUNC>
 void combine_rows(RAND_ACC_IT startIt, std::size_t width, std::size_t paddedWidth, std::size_t height, FUNC combine_func, std::size_t threadNum = 0, numThreads = 1, multiple = 1) {
 	ASSERT(multiple > 0);
@@ -119,33 +143,74 @@ namespace game_engine {
 
 
 	void entity_system::worker_think(worker_data& workerData) {
+		{
+			// Flags -> integers for the sake of all the other threads
+			entity_id** resultSetStarts = .......;
+			entity_id** resultSetEnds = .......;
+
+			std::span<deletion_flags_block>* deletionsFlaggedByThisWorker = workerData.get_deletion_flags_span();
+			for(deletion_flags_block* it = deletionsFlaggedByThisWorker.begin(); it != deletionsFlaggedByThisWorker.end(); ++it) {
+				const deletion_flags_block& flagBlock = *it;
+				for(std::size_t i = 0; i != flagBlock.size(); ++i) {
+					std::byte part = flagBlock[i];
+					while(part != std::byte(0)) [[unlikely]] {
+						const std::size_t bitNum = oskar::count_trailing_zeroes(part);
+						part ^= deletion_flags_block::value_type(1) << bitNum;
+						const entity_id entId = bitNum + firstPossibleEntIdThisIteration + i * std::numeric_limits<unsigned char>::digits;
+						*resultSetEnds[entId / entities_per_full_segment]++ = entId;
+					}
+				}
+			}
+			for(std::size_t i = 0; i != num_workers; ++i) {
+				if(*resultSetEnds[i] != std::numeric_limits<entity_id>::max()) {
+					*resultSetEnds[i] = std::numeric_limits<entity_id>::max();
+				}
+			}
+		}
+		sync...
+		{
+			entity_count previousWrite = (entity_count) placeholder_entity_id;
+			const entity_count** lists = ....;
+			entity_count toWrite;
+			workerData.the_ents_i_should_delete_end_of_list = workerData.the_ents_i_should_delete_beginning_of_list;
+			do {
+				toWrite = std::numeric_limits<entity_count>::max();
+				for(std::size_t i = 0; i < numLists; ++i) {
+					lists[i] += *lists[i] == previousWrite;
+					toWrite = std::min(toWrite, *lists[i]);
+				}
+				previousWrite = toWrite;
+				const bool done = toWrite == std::numeric_limits<entity_count>::max();
+				if(!done) {
+					*workerData.the_ents_i_should_delete_end_of_list++ = (entity_id)toWrite;
+				}
+			} while(toWrite != std::numeric_limits<entity_count>::max());
+		}
+		Now... we have our list of ents to delete. We dont need any of the below
+		We only need to iterate through the components and systems and call deleteEnt(entId, workerId)
+
+
 
 		{
 			// Deletion flag merging
 			// Done vertically in order to prevent problems when two workers have flagged the same entity for deletion
 			
-			const deletion_flags_block* currentBlockOfFirstRowIt = entity_deletion_flags.get() + oskar::multiply_and_divide(workerData.worker_number, num_blocks_per_entity_deletion_flags_row, num_workers);
-			const deletion_flags_block* const endBlockOfFirstRowIt = entity_deletion_flags.get() + oskar::multiply_and_divide(workerData.worker_number + 1, num_blocks_per_entity_deletion_flags_row, num_workers);
-//			const deletion_flags_block* const lastIt = firstRowCurrentBlockIt + num_blocks_per_entity_deletion_flags_row * (num_workers - 1);
-			
-			
-			entity_id firstPossibleEntIdThisIteration = (currentBlockOfFirstRowIt - entity_deletion_flags.get()) * entity_deletion_flags_block_size_and_alignment * std::numeric_limits<unsigned char>::digits;
-			while(currentBlockOfFirstRowIt != endBlockOfFirstRowIt) {
-				alignas(std::max(alignof(deletion_flags_block), alignof(unsigned long long))) deletion_flags_block sumOfFlags{};
-				const deletion_flags_block* currentBlockIt = currentBlockOfFirstRowIt;
-				const deletion_flags_block* const currentBlockOfLastRowIt = currentBlockOfFirstRowIt + num_blocks_per_entity_deletion_flags_row * num_workers;
+			const deletion_flags_block* currentBlockOfFirstRowIt = entity_deletion_flags.get() + workerData.id;
+			const deletion_flags_block* const endOfFirstRowIt = entity_deletion_flags.get() + entity_deletion_flags_blocks_per_worker();
+			entity_id firstPossibleEntIdThisIteration = workerData.id * entities_per_full_segment;
+			while(currentBlockOfFirstRowIt < endOfFirstRowIt) {
+				deletion_flags_block sumOfFlags{};
 
 				#ifdef __has_builtin
 					#if  __has_builtin(__builtin_assume_aligned)
 						currentBlockIt = __builtin_assume_aligned(currentBlockIt, entity_deletion_flags_block_size_and_alignment);
 					#endif
 				#endif
-				while(currentBlockIt <= currentBlockOfLastRowIt) {
-					const deletion_flags_block& currentBlock = *currentBlockIt;
+				for(worker_count rowNumber = 0; rowNumber != num_workers; ++rowNumber) {
+					const deletion_flags_block& currentBlock = *(currentBlockOfFirstRowIt + rowNumber * entity_deletion_flags_blocks_per_worker());
 					for(std::size_t i = 0; i != currentBlock.size(); ++i) {
 						sumOfFlags[i] |= currentBlock[i];
 					}
-					currentBlockIt += num_blocks_per_entity_deletion_flags_row;
 				}
 				
 
@@ -162,13 +227,13 @@ namespace game_engine {
 						
 						workerData.ents_to_delete[deletes_offset + num_deletes] = entId;
 						num_deletes++;
-						
-						OPKWEPOKROPWKER FORTSÄTT HÄR!!!! NU HAR VI ETT ENTITY_ID SOM DU VET BEHÖVS TAS BORT!!!
+
+						OPKWEPOKROPWKER FORTSÄTT HÄR!!!!NU HAR VI ETT ENTITY_ID SOM DU VET BEHÖVS TAS BORT!!!
 					}
 				}
 
-				++currentBlockOfFirstRowIt;
-				firstPossibleEntIdThisIteration += entity_deletion_flags_block_size_and_alignment * std::numeric_limits<unsigned char>::digits;
+				currentBlockOfFirstRowIt += num_workers;
+				firstPossibleEntIdThisIteration += entities_per_full_segment * num_workers;
 			}
 		}
 		{
