@@ -65,6 +65,23 @@ namespace oskar {
 		std::numeric_limits<std::decay_t<A>>::max() <= std::numeric_limits<std::decay_t<B>>::max()
 	);
 
+
+
+
+	template<std::intmax_t max_val, std::intmax_t lowest_val = -1 - max_val> using big_enough_least_sint = std::conditional_t<
+		max_val <= std::numeric_limits<std::int_least8_t>::max() && lowest_val <= std::numeric_limits<std::int_least8_t>::lowest(), std::int_least8_t, std::conditional_t<
+		max_val <= std::numeric_limits<std::int_least16_t>::max() && lowest_val <= std::numeric_limits<std::int_least16_t>::lowest(), std::int_least16_t, std::conditional_t<
+		max_val <= std::numeric_limits<std::int_least32_t>::max() && lowest_val <= std::numeric_limits<std::int_least32_t>::lowest(), std::int_least32_t, std::conditional_t<
+		max_val <= std::numeric_limits<std::int_least64_t>::max() && lowest_val <= std::numeric_limits<std::int_least64_t>::lowest(), std::int_least64_t, std::conditional_t<
+		max_val <= std::numeric_limits<signed short>::max() && lowest_val <= std::numeric_limits<signed short>::lowest(), signed short, std::conditional_t<
+		max_val <= std::numeric_limits<signed int>::max() && lowest_val <= std::numeric_limits<signed int>::lowest(), signed int, std::conditional_t<
+		max_val <= std::numeric_limits<signed long>::max() && lowest_val <= std::numeric_limits<signed long>::lowest(), signed long, std::conditional_t<
+		max_val <= std::numeric_limits<signed long long>::max() && lowest_val <= std::numeric_limits<signed long long>::lowest(), signed long long, std::sintmax_t
+		>>>>>>>>;
+	template<std::uintmax_t digits> using least_sint_with_digits = std::enable_if_t<digits <= std::numeric_limits<std::intmax_t>::digits, big_enough_least_sint<std::intmax_t(1) << int(digits)>>;
+
+
+
 	template<std::intmax_t max_val, std::intmax_t lowest_val = -1 - max_val> using big_enough_fast_sint = std::conditional_t<
 		max_val <= std::numeric_limits<std::int_fast8_t>::max() && lowest_val <= std::numeric_limits<std::int_fast8_t>::lowest(), std::int_fast8_t, std::conditional_t<
 		max_val <= std::numeric_limits<std::int_fast16_t>::max() && lowest_val <= std::numeric_limits<std::int_fast16_t>::lowest(), std::int_fast16_t, std::conditional_t<
@@ -108,6 +125,22 @@ namespace oskar {
 		>
 	>;
 
+
+
+	template<std::uintmax_t max_val> using big_enough_least_uint = std::conditional_t<
+		max_val <= std::numeric_limits<std::uint_least8_t>::max(), std::uint_least8_t, std::conditional_t<
+		max_val <= std::numeric_limits<std::uint_least16_t>::max(), std::uint_least16_t, std::conditional_t<
+		max_val <= std::numeric_limits<std::uint_least32_t>::max(), std::uint_least32_t, std::conditional_t<
+		max_val <= std::numeric_limits<std::uint_least64_t>::max(), std::uint_least64_t, std::conditional_t<
+		max_val <= std::numeric_limits<unsigned short>::max(), unsigned short, std::conditional_t<
+		max_val <= std::numeric_limits<unsigned int>::max(), unsigned int, std::conditional_t<
+		max_val <= std::numeric_limits<unsigned long>::max(), unsigned long, std::conditional_t<
+		max_val <= std::numeric_limits<unsigned long long>::max(), unsigned long long, std::uintmax_t
+		>>>>>>>>;
+	template<std::uintmax_t digits> using least_uint_with_digits = std::enable_if_t<digits <= std::numeric_limits<std::uintmax_t>::digits, big_enough_least_uint<std::uintmax_t(1) << int(digits)>>;
+
+
+
 	template<std::uintmax_t max_val> using big_enough_fast_uint = std::conditional_t<
 		max_val <= std::numeric_limits<std::uint_fast8_t>::max(), std::uint_fast8_t, std::conditional_t<
 		max_val <= std::numeric_limits<std::uint_fast16_t>::max(), std::uint_fast16_t, std::conditional_t<
@@ -118,7 +151,7 @@ namespace oskar {
 		max_val <= std::numeric_limits<unsigned long>::max(), unsigned long, std::conditional_t<
 		max_val <= std::numeric_limits<unsigned long long>::max(), unsigned long long, std::uintmax_t
 	>>>>>>>>;
-	template<std::uintmax_t digits> using fast_uint_with_digits = big_enough_fast_uint<std::uintmax_t(1) << (std::max(0, int(std::min((std::uintmax_t) std::numeric_limits<std::uintmax_t>::digits, digits)) - 1))>;
+	template<std::uintmax_t digits> using fast_uint_with_digits = std::enable_if_t<digits <= std::numeric_limits<std::uintmax_t>::digits, big_enough_fast_uint<std::uintmax_t(1) << int(digits)>>;
 
 	namespace detail {
 		template<class A, class B> constexpr bool big_enough_fast_uint_for_multiplication_result_exists_no_cvr = (
