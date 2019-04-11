@@ -82,10 +82,45 @@ struct car_component {
 	columnC;
 };
 
+class car_module {
+	component carComponent;
+	//system carGearingSystem;
+	process carThink;
+
+	car_module(game& g) : carComponent(g) {
+		carComponent.cGear.set();
+	}
+};
+class tractor_module {
+	component tractorComponent;
+	think mainThink;
+
+	void mainThinkFunc(physics_main_system physMain, car_gearing_system carGearing, ents) {
+		carGearing.gearUp(randomEnt());
+
+	}
+
+	tractor_module(game& g) : tractorComponent(g) {
+		mainThink = think(
+			physicsMainSystemDescription,
+			carGearingSystemDescription,
+
+			mainThinkFunc,
+			carMainThink
+		);
+
+	}
+};
+
 struct car_gearing_system {
 	car_component& carComp;
 	column_access_descriptor gearsStageAccess(physicsAccess, column_access_descriptor(car_component.gears, rw, 4), column_access_descriptor(car_component.lights, read));
+	
+	car_gearing_system() {
+		gearsStageAccess.lock();
+	}
 };
+
 
 class car_component {
 	private:
